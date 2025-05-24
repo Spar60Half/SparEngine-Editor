@@ -1,6 +1,7 @@
+
 import pygame
 import tkinter as tk
-from tkinter import filedialog, simpledialog, messagebox, ttk
+from tkinter import filedialog, simpledialog, messagebox, ttk, colorchooser
 from tkinter import font as tkfont
 import json
 import os
@@ -11,6 +12,7 @@ from PIL import Image, ImageTk
 import sys
 import subprocess
 import math
+import time
 
 class SparEngineEditor:
     def __init__(self, root):
@@ -30,25 +32,63 @@ class SparEngineEditor:
         self.global_script = None
         self.object_images = {}  # Cache de imágenes para los sprites
         self.parenting_target = None  # Para el sistema de parenting
+        self.last_update_time = 0
+
+        # Configuración de temas
+        self.themes = {
+            "Dark": {
+                "bg": "#2d2d2d",
+                "fg": "white",
+                "canvas_bg": "#1e1e1e",
+                "accent": "#4a9cff",
+                "grid": "#333333"
+            },
+            "Light": {
+                "bg": "#f0f0f0",
+                "fg": "black",
+                "canvas_bg": "#ffffff",
+                "accent": "#8ea1b5",
+                "grid": "#cccccc"
+            },
+            "Blue": {
+                "bg": "#1a2b3c",
+                "fg": "white",
+                "canvas_bg": "#0f1a26",
+                "accent": "#4a9cff",
+                "grid": "#1e3a5a"
+            }
+        }
+        
+        self.current_theme = "Dark"
+        self.pygame_bg_color = (0, 0, 0)  # Color de fondo de Pygame (negro por defecto)
 
         # Configuración de la UI
         self.setup_ui()
-        
-        # Cargar iconos por defecto
+        self.setup_menu()
         self.load_default_icons()
+        self.setup_file_watcher()
 
     def setup_ui(self):
-        self.root.configure(bg="#2d2d2d")
+        self.root.configure(bg=self.themes[self.current_theme]["bg"])
         self.root.geometry("1200x800")
         
         # Configurar estilo
         self.style = ttk.Style()
         self.style.theme_use('clam')
-        self.style.configure('TFrame', background='#2d2d2d')
-        self.style.configure('TButton', background='#3c3c3c', foreground='white')
-        self.style.configure('TLabel', background='#2d2d2d', foreground='white')
-        self.style.configure('TEntry', fieldbackground='#3c3c3c', foreground='white')
-        self.style.configure('TCombobox', fieldbackground='#3c3c3c', foreground='white')
+        self.style.configure('.', 
+                           background=self.themes[self.current_theme]["bg"], 
+                           foreground=self.themes[self.current_theme]["fg"])
+        self.style.configure('TFrame', background=self.themes[self.current_theme]["bg"])
+        self.style.configure('TButton', background="#3c3c3c", foreground=self.themes[self.current_theme]["fg"])
+        self.style.configure('TLabel', background=self.themes[self.current_theme]["bg"], 
+                           foreground=self.themes[self.current_theme]["fg"])
+        self.style.configure('TEntry', fieldbackground="#3c3c3c", 
+                           foreground=self.themes[self.current_theme]["fg"])
+        self.style.configure('TCombobox', fieldbackground="#3c3c3c", 
+                           foreground=self.themes[self.current_theme]["fg"])
+        self.style.configure('Treeview', background="#3c3c3c", 
+                           foreground=self.themes[self.current_theme]["fg"], 
+                           fieldbackground="#3c3c3c")
         
         # Frame superior
         self.top_frame = ttk.Frame(self.root)
@@ -105,7 +145,8 @@ class SparEngineEditor:
         self.center_panel = ttk.Frame(self.main_frame)
         self.center_panel.pack(fill=tk.BOTH, expand=True)
         
-        self.scene_canvas = tk.Canvas(self.center_panel, bg="#1e1e1e", bd=0, highlightthickness=0)
+        self.scene_canvas = tk.Canvas(self.center_panel, bg=self.themes[self.current_theme]["canvas_bg"], 
+                                     bd=0, highlightthickness=0)
         self.scene_canvas.pack(fill=tk.BOTH, expand=True)
         
         # Configurar eventos del canvas
@@ -127,7 +168,70 @@ class SparEngineEditor:
         
         # Configurar el inspector vacío (se llenará cuando se seleccione un objeto)
         self.setup_inspector()
+
+    def setup_menu(self):
+        menubar = tk.Menu(self.root)
         
+        # Menú de temas
+        theme_menu = tk.Menu(menubar, tearoff=0)
+        for theme_name in self.themes:
+            theme_menu.add_command(
+                label=theme_name,
+                command=lambda t=theme_name: self.change_theme(t)
+            )
+        
+        # Menú de color de Pygame
+        pygame_menu = tk.Menu(menubar, tearoff=0)
+        pygame_menu.add_command(
+            label="Cambiar color de fondo",
+            command=self.change_pygame_bg_color
+        )
+        
+        menubar.add_cascade(label="Temas", menu=theme_menu)
+        menubar.add_cascade(label="Pygame", menu=pygame_menu)
+        
+        self.root.config(menu=menubar)
+    
+    def change_theme(self, theme_name):
+        if theme_name in self.themes:
+            self.current_theme = theme_name
+            theme = self.themes[theme_name]
+            
+            # Aplicar tema a la interfaz
+            self.root.configure(bg=theme["bg"])
+            self.style.configure('.', background=theme["bg"], foreground=theme["fg"])
+            self.style.configure('TFrame', background=theme["bg"])
+            self.style.configure('TButton', background="#3c3c3c", foreground=theme["fg"])
+            self.style.configure('TLabel', background=theme["bg"], foreground=theme["fg"])
+            self.style.configure('TEntry', fieldbackground="#3c3c3c", foreground=theme["fg"])
+            self.style.configure('TCombobox', fieldbackground="#3c3c3c", foreground=theme["fg"])
+            self.style.configure('Treeview', background="#3c3c3c", foreground=theme["fg"], fieldbackground="#3c3c3c")
+            
+            # Actualizar colores del canvas
+            self.scene_canvas.configure(bg=theme["canvas_bg"])
+            
+            # Actualizar todos los frames y widgets
+            self.update_widget_colors()
+            self.draw_scene()  # Redibujar la escena con nuevos colores
+    
+    def change_pygame_bg_color(self):
+        color = colorchooser.askcolor(title="Elige color de fondo para Pygame")
+        if color[1]:  # Si se seleccionó un color
+            self.pygame_bg_color = tuple(int(color[1][i:i+2], 16) for i in (1, 3, 5))
+            messagebox.showinfo("Color actualizado", 
+                              f"El color de fondo de Pygame se ha cambiado a {color[1]}")
+    
+    def update_widget_colors(self):
+        theme = self.themes[self.current_theme]
+        
+        # Actualizar todos los frames
+        for frame in [self.top_frame, self.main_frame, self.left_panel, 
+                     self.right_panel, self.center_panel]:
+            frame.configure(style="TFrame")
+        
+        # Actualizar otros widgets que necesiten cambios específicos
+        self.scene_canvas.configure(bg=theme["canvas_bg"])
+    
     def setup_inspector(self):
         # Limpiar el inspector
         for widget in self.inspector_frame.winfo_children():
@@ -284,29 +388,71 @@ class SparEngineEditor:
             
     def start_parenting(self):
         if self.selected_object_index is not None:
-            self.parenting_target = self.objects[self.selected_object_index]["name"]
-            messagebox.showinfo("Parenting", f"Selecciona el objeto hijo para {self.parenting_target}")
+            selected_obj = self.objects[self.selected_object_index]
             
-    def remove_parenting(self):
-        if self.selected_object_index is not None:
-            obj = self.objects[self.selected_object_index]
-            if "parent" in obj:
-                del obj["parent"]
-                self.save_scene()
-                self.update_hierarchy()
-                self.setup_inspector()
-                
+            # Verificar que no sea hijo de sí mismo ni de sus descendientes
+            if not self.is_descendant(selected_obj["name"], selected_obj.get("parent")):
+                self.parenting_target = selected_obj["name"]
+                messagebox.showinfo("Parenting", 
+                    f"Selecciona el objeto hijo para {self.parenting_target}\n"
+                    f"Nota: No puedes hacer parenting circular")
+            else:
+                messagebox.showerror("Error", "No puedes establecer parenting circular")
+
+    def is_descendant(self, parent_name, child_name):
+        """Verifica si child_name es descendiente de parent_name (evitar parenting circular)"""
+        if not child_name:
+            return False
+            
+        current_obj = next((obj for obj in self.objects if obj["name"] == child_name), None)
+        if not current_obj:
+            return False
+            
+        if current_obj.get("parent") == parent_name:
+            return True
+            
+        if current_obj.get("parent"):
+            return self.is_descendant(parent_name, current_obj.get("parent"))
+            
+        return False
+
     def complete_parenting(self, child_name):
         if self.parenting_target:
+            # Verificar que no estamos creando un ciclo
+            if self.parenting_target == child_name or self.is_descendant(child_name, self.parenting_target):
+                messagebox.showerror("Error", "No puedes establecer parenting circular")
+                self.parenting_target = None
+                return
+                
             for obj in self.objects:
                 if obj["name"] == child_name:
-                    obj["parent"] = self.parenting_target
+                    # Quitar de la posición actual del padre si ya tenía uno
+                    old_parent = obj.get("parent")
+                    if old_parent:
+                        old_parent_obj = next((o for o in self.objects if o["name"] == old_parent), None)
+                        if old_parent_obj:
+                            # Convertir posición a global antes de cambiar de padre
+                            old_parent_x, old_parent_y = self.get_world_position(old_parent_obj)
+                            obj["x"] += old_parent_x
+                            obj["y"] += old_parent_y
+                    
+                    # Establecer nuevo padre y convertir posición a relativa
+                    new_parent_obj = next((o for o in self.objects if o["name"] == self.parenting_target), None)
+                    if new_parent_obj:
+                        new_parent_x, new_parent_y = self.get_world_position(new_parent_obj)
+                        obj["x"] -= new_parent_x
+                        obj["y"] -= new_parent_y
+                        obj["parent"] = self.parenting_target
+                    else:
+                        obj["parent"] = None
+                    
                     self.save_scene()
                     self.update_hierarchy()
                     self.setup_inspector()
                     break
+                    
             self.parenting_target = None
-            
+                
     def on_object_select(self, event):
         selection = self.hierarchy_tree.selection()
         if selection:
@@ -459,11 +605,45 @@ class SparEngineEditor:
                 return child_item
         return None
 
+    def setup_file_watcher(self):
+        # Verificar cambios cada segundo
+        self.root.after(1000, self.check_for_files_changes)
+
+    def check_for_files_changes(self):
+        if self.project_path:
+            # Verificar si hay cambios en los archivos
+            current_time = os.path.getmtime(self.project_path)
+            if current_time > self.last_update_time:
+                self.load_project_files()
+                self.last_update_time = current_time
+        
+        # Programar la próxima verificación
+        self.root.after(1000, self.check_for_files_changes)
+
     def load_project_files(self):
+        # Guardar el estado de expansión de los nodos
+        expanded = set()
+        for item in self.project_browser.get_children():
+            if self.project_browser.item(item, "open"):
+                expanded.add(self.project_browser.item(item, "text"))
+        
         self.project_browser.delete(*self.project_browser.get_children())
         if self.project_path:
             self.populate_tree(self.project_browser, self.project_path)
             
+            # Restaurar el estado de expansión
+            for item in self.find_items_by_text(self.project_browser, expanded):
+                self.project_browser.item(item, open=True)
+
+    def find_items_by_text(self, tree, texts):
+        """Encuentra items en el árbol por su texto"""
+        items = []
+        for text in texts:
+            item = self.find_item_by_text(tree, text)
+            if item:
+                items.append(item)
+        return items
+
     def populate_tree(self, tree, path, parent=""):
         try:
             for item in os.listdir(path):
@@ -496,14 +676,39 @@ class SparEngineEditor:
                 self.global_script = os.path.relpath(path, self.project_path)
                 self.save_project_config()
                 messagebox.showinfo("Script Global", f"Script global asignado: {os.path.basename(path)}")
-
+        
+    def remove_parenting(self):
+        """Elimina la relación de parenting del objeto seleccionado"""
+        if self.selected_object_index is not None:
+            obj = self.objects[self.selected_object_index]
+            
+            if "parent" in obj:
+                # Convertir las coordenadas relativas a globales antes de quitar el parent
+                parent_obj = next((o for o in self.objects if o["name"] == obj["parent"]), None)
+                if parent_obj:
+                    parent_x, parent_y = self.get_world_position(parent_obj)
+                    obj["x"] += parent_x
+                    obj["y"] += parent_y
+                
+                # Eliminar la referencia al padre
+                del obj["parent"]
+                
+                # Actualizar la interfaz y guardar
+                self.save_scene()
+                self.update_hierarchy()
+                self.setup_inspector()
+            else:
+                messagebox.showinfo("Info", "Este objeto no tiene un padre asignado")
     def project_browser_right_click(self, event):
         item = self.project_browser.identify_row(event.y)
+        
+        menu = tk.Menu(self.root, tearoff=0)
+        
         if item:
+            # Click en un item existente
             path = self.project_browser.item(item, "values")[0]
             is_dir = os.path.isdir(path)
             
-            menu = tk.Menu(self.root, tearoff=0)
             menu.add_command(label="Abrir", command=lambda: self.open_file(path))
             
             if path.endswith(".py"):
@@ -515,8 +720,56 @@ class SparEngineEditor:
                                command=lambda: self.create_script_in_folder(path))
                 menu.add_command(label="Nueva Carpeta", 
                                command=lambda: self.create_folder_in_folder(path))
+        else:
+            # Click en espacio vacío - operaciones en la raíz del proyecto
+            if self.project_path:
+                menu.add_command(label="Nuevo Script en Raíz", 
+                               command=lambda: self.create_script_in_folder(self.project_path))
+                menu.add_command(label="Nueva Carpeta en Raíz", 
+                               command=lambda: self.create_folder_in_folder(self.project_path))
+            else:
+                menu.add_command(label="Abrir Proyecto", command=self.select_project)
+        
+        menu.tk_popup(event.x_root, event.y_root)
+    
+    def create_script_in_folder(self, folder_path):
+        """Crea un nuevo script Python en la carpeta especificada"""
+        name = simpledialog.askstring("Nuevo Script", "Nombre del script (.py):")
+        if name:
+            if not name.endswith('.py'):
+                name += '.py'
+            path = os.path.join(folder_path, name)
             
-            menu.tk_popup(event.x_root, event.y_root)
+            # Verificar si el archivo ya existe
+            if os.path.exists(path):
+                messagebox.showerror("Error", f"El archivo {name} ya existe")
+                return
+                
+            try:
+                with open(path, 'w') as f:
+                    f.write("# Nuevo script\n")
+                self.load_project_files()  # Actualizar el explorador
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo crear el archivo: {e}")
+    
+    def create_folder_in_folder(self, folder_path):
+        """Crea una nueva carpeta dentro de la carpeta especificada"""
+        name = simpledialog.askstring("Nueva Carpeta", "Nombre de la carpeta:")
+        if name:
+            path = os.path.join(folder_path, name)
+            
+            # Verificar si la carpeta ya existe
+            if os.path.exists(path):
+                messagebox.showerror("Error", f"La carpeta {name} ya existe")
+                return
+                
+            try:
+                os.makedirs(path, exist_ok=True)
+                self.load_project_files()  # Actualizar el explorador
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo crear la carpeta: {e}")
+    
+    # ... (resto del código existente)
             
     def open_file(self, path):
         if os.path.isfile(path):
@@ -831,7 +1084,7 @@ class SparEngineEditor:
             # Dibujar un rectángulo de selección
             self.scene_canvas.create_rectangle(
                 x - 30, y - 30, x + 30, y + 30,
-                outline="#00ffff", dash=(4, 2), width=2
+                outline=self.themes[self.current_theme]["accent"], dash=(4, 2), width=2
             )
 
     def draw_grid(self):
@@ -848,14 +1101,14 @@ class SparEngineEditor:
         for x in range(int(start_x), width, grid_size):
             self.scene_canvas.create_line(
                 x, 0, x, height,
-                fill="#333333", width=1
+                fill=self.themes[self.current_theme]["grid"], width=1
             )
         
         # Dibujar líneas horizontales
         for y in range(int(start_y), height, grid_size):
             self.scene_canvas.create_line(
                 0, y, width, y,
-                fill="#333333", width=1
+                fill=self.themes[self.current_theme]["grid"], width=1
             )
 
     def draw_object(self, obj):
@@ -1025,8 +1278,8 @@ class SparEngineEditor:
                     except Exception as e:
                         print(f"Error en update de {obj['name']}: {e}")
 
-            # Dibujar
-            screen.fill("black")
+            # Dibujar con el color de fondo personalizado
+            screen.fill(self.pygame_bg_color)
             
             # Dibujar objetos
             for obj in self.objects:
